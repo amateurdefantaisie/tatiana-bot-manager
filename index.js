@@ -8,6 +8,8 @@ const { initializeApp } = require("firebase/app");
 const { getDatabase, ref, onValue, get, child } = require("firebase/database");
 const pino = require("pino");
 require('dotenv').config();
+fig();
+fig();
 
 // --- CONFIGURATION FIREBASE ---
 const firebaseConfig = {
