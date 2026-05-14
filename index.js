@@ -1,47 +1,67 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    delay, 
+    makeCacheableSignalKeyStore 
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+require('dotenv').config();
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const emojis = ['❤️', '🔥', '✨', '🙌', '💯', '🌸', '👗', '👑'];
 
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { args: ['--no-sandbox'] } // Obligatoire pour Bot-hosting
-});
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./database/auth_info');
 
-// --- AUTOMATISATION DES STATUTS ---
-client.on('message', async msg => {
-    // Si vous recevez un statut (broadcast)
-    if (msg.isStatus) {
-        await msg.react('❤️'); // Like automatique des statuts
-        console.log(`Statut de ${msg.from} liké automatiquement.`);
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false, // Désactivé pour le code de couplage
+        logger: pino({ level: "silent" }),
+    });
+
+    // --- LOGIQUE DE COUPLAGE PAR CODE ---
+    if (!sock.authState.creds.registered) {
+        const phoneNumber = process.env.NUMERO_BOT;
+        if (phoneNumber) {
+            await delay(5000);
+            const code = await sock.requestPairingCode(phoneNumber);
+            console.log(`\n========================================\n`);
+            console.log(`TON CODE DE COUPLAGE : ${code}`);
+            console.log(`\n========================================\n`);
+        }
     }
-});
 
-// --- INTERFACE DE GESTION ---
-io.on('connection', (socket) => {
-    console.log('Interface connectée');
+    // --- LIKER LES STATUTS AUTOMATIQUEMENT ---
+    sock.ev.on('messages.upsert', async (chatUpdate) => {
+        const m = chatUpdate.messages[0];
+        if (!m.message) return;
 
-    // Envoyer les conversations à l'interface
-    socket.on('get_chats', async () => {
-        const chats = await client.getChats();
-        socket.emit('list_chats', chats);
+        // Détection de statut
+        if (m.key.remoteJid === 'status@broadcast') {
+            const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+            await sock.sendMessage(m.key.remoteJid, { react: { text: randomEmoji, key: m.key } }, { statusJidList: [m.key.participant] });
+            console.log(`Statut liké avec : ${randomEmoji}`);
+        }
+
+        // --- GESTION DES COMMANDES (.menu, .settings, etc.) ---
+        const messageText = m.message.conversation || m.message.extendedTextMessage?.text;
+        if (messageText?.startsWith('.')) {
+            const command = messageText.slice(1).toLowerCase();
+            
+            switch(command) {
+                case 'menu':
+                    await sock.sendMessage(m.key.remoteJid, { text: "👗 *MENU TATIANA COUTURE*\n\n1. .shop (Articles)\n2. .expo (Confections)\n3. .order (Commander)\n4. .settings (Paramètres)" });
+                    break;
+                case 'msgn':
+                    await sock.sendMessage(m.key.remoteJid, { text: "🔍 Vérification des messages non lus en cours..." });
+                    break;
+                case 'settings':
+                    await sock.sendMessage(m.key.remoteJid, { text: "⚙️ *PARAMÈTRES*\n\n- Profil : Actif\n- Like Statut : Aléatoire\n- Auto-réponse : ON" });
+                    break;
+            }
+        }
     });
 
-    // Envoyer un message depuis l'interface
-    socket.on('send_message', async ({ to, message }) => {
-        await client.sendMessage(to, message);
-    });
+    sock.ev.on('creds.update', saveCreds);
+}
 
-    // Changer le profil depuis l'interface
-    socket.on('update_profile', async ({ name, bio }) => {
-        if(name) await client.setDisplayName(name);
-        if(bio) await client.setStatus(bio);
-    });
-});
-
-client.initialize();
-server.listen(process.env.PORT || 3000);
+startBot();
