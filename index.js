@@ -10,6 +10,10 @@ const pino = require("pino");
 require('dotenv').config();
 fig();
 fig();
+;
+fig();
+;
+fig();
 
 // --- CONFIGURATION FIREBASE ---
 const firebaseConfig = {
